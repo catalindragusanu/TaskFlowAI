@@ -64,6 +64,15 @@ if (isReal) {
   }
 }
 
+// Helper to check if we should use Firestore
+// We only use Firestore if:
+// 1. Config is present
+// 2. Firestore initialized
+// 3. User is NOT the guest user (Guests strictly use LocalStorage)
+const useFirestore = (userId?: string) => {
+    return isReal && firestore && userId && userId !== 'guest-user';
+};
+
 // ==========================================
 // UNIFIED DATABASE SERVICE
 // ==========================================
@@ -72,7 +81,7 @@ export const db = {
 
   // --- AUTH ---
   registerUser: async (user: UserProfile): Promise<UserProfile> => {
-     if (db.isRealMode && auth) {
+     if (isReal && auth) {
         const userCredential = await createUserWithEmailAndPassword(auth, user.email, user.password || 'password');
         const newUserProfile = { ...user, id: userCredential.user.uid, password: '' };
         // Optionally save to 'users' collection
@@ -95,7 +104,7 @@ export const db = {
   },
 
   loginUser: async (email: string, pass: string): Promise<UserProfile> => {
-      if (db.isRealMode && auth) {
+      if (isReal && auth) {
           const userCredential = await signInWithEmailAndPassword(auth, email, pass);
           return {
               id: userCredential.user.uid,
@@ -118,7 +127,7 @@ export const db = {
   },
 
   resetPassword: async (email: string): Promise<void> => {
-      if (db.isRealMode && auth) {
+      if (isReal && auth) {
           await sendPasswordResetEmail(auth, email);
           return;
       }
@@ -127,7 +136,7 @@ export const db = {
   },
 
   socialLogin: async (providerName: 'google' | 'apple' | 'github'): Promise<UserProfile> => {
-      if (db.isRealMode && auth) {
+      if (isReal && auth) {
           let provider;
           if (providerName === 'google') provider = new GoogleAuthProvider();
           else if (providerName === 'github') provider = new GithubAuthProvider();
@@ -160,20 +169,20 @@ export const db = {
   },
 
   logout: async () => {
-    if (db.isRealMode && auth) {
+    if (isReal && auth) {
         await signOut(auth);
     }
   },
 
   // --- TASKS ---
   getTasks: async (userId: string): Promise<Task[]> => {
-    if (db.isRealMode && firestore) {
+    if (useFirestore(userId)) {
       try {
         const q = query(collection(firestore, "tasks"), where("userId", "==", userId));
         const querySnapshot = await getDocs(q);
         return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Task));
       } catch (e) {
-        console.warn("Firestore access failed. Falling back to Local Storage.");
+        console.warn("Firestore access failed. Falling back to Local Storage.", e);
         return getLocal<Task>(KEYS.TASKS).filter(t => t.userId === userId);
       }
     } else {
@@ -182,7 +191,7 @@ export const db = {
   },
 
   addTask: async (task: Task) => {
-    if (db.isRealMode && firestore) {
+    if (useFirestore(task.userId)) {
       try {
         await setDoc(doc(firestore, "tasks", task.id), task);
         return;
@@ -196,7 +205,7 @@ export const db = {
   },
 
   updateTask: async (updatedTask: Task) => {
-    if (db.isRealMode && firestore) {
+    if (useFirestore(updatedTask.userId)) {
       try {
         const taskRef = doc(firestore, "tasks", updatedTask.id);
         const { id, ...data } = updatedTask; 
@@ -213,11 +222,17 @@ export const db = {
   },
 
   deleteTask: async (taskId: string) => {
-    if (db.isRealMode && firestore) {
+    // We can't easily check userId here without fetching, but deletions typically require Auth in rules.
+    // However, since we don't pass userId to deleteTask, we try firestore if globally enabled, 
+    // but knowing the caller usually provides a context.
+    // In this specific architecture, we should try firestore if isReal, but fallback safely.
+    if (isReal && firestore) {
       try {
         await deleteDoc(doc(firestore, "tasks", taskId));
         return;
-      } catch (e) {}
+      } catch (e) {
+          // If permission denied (guest user), we fall through to local
+      }
     }
     const tasks = getLocal<Task>(KEYS.TASKS);
     const filtered = tasks.filter(t => t.id !== taskId);
@@ -225,7 +240,7 @@ export const db = {
   },
 
   clearCompletedTasks: async (userId: string) => {
-    if (db.isRealMode && firestore) {
+    if (useFirestore(userId)) {
       try {
         const q = query(
           collection(firestore, "tasks"), 
@@ -245,7 +260,7 @@ export const db = {
 
   // --- CONTACTS ---
   getContacts: async (userId: string): Promise<EmailContact[]> => {
-    if (db.isRealMode && firestore) {
+    if (useFirestore(userId)) {
       try {
         const q = query(collection(firestore, "contacts"), where("userId", "==", userId));
         const s = await getDocs(q);
@@ -259,7 +274,7 @@ export const db = {
   },
 
   addContact: async (contact: EmailContact) => {
-    if (db.isRealMode && firestore) {
+    if (useFirestore(contact.userId)) {
       try {
         await setDoc(doc(firestore, "contacts", contact.id), contact);
         return;
@@ -271,7 +286,7 @@ export const db = {
   },
 
   updateContact: async (contact: EmailContact) => {
-    if (db.isRealMode && firestore) {
+    if (useFirestore(contact.userId)) {
       try {
         const { id, ...data } = contact;
         await updateDoc(doc(firestore, "contacts", id), data as any);
@@ -287,7 +302,7 @@ export const db = {
   },
 
   deleteContact: async (id: string) => {
-    if (db.isRealMode && firestore) {
+    if (isReal && firestore) {
       try {
         await deleteDoc(doc(firestore, "contacts", id));
         return;
@@ -300,7 +315,7 @@ export const db = {
 
   // --- TEMPLATES ---
   getCustomTemplates: async (userId: string): Promise<PlanTemplate[]> => {
-    if (db.isRealMode && firestore) {
+    if (useFirestore(userId)) {
       try {
         const q = query(collection(firestore, "templates"), where("userId", "==", userId));
         const s = await getDocs(q);
@@ -314,7 +329,8 @@ export const db = {
   },
 
   addTemplate: async (template: PlanTemplate) => {
-    if (db.isRealMode && firestore) {
+    // Templates might not have userId if they are defaults, handle safely
+    if (template.userId && useFirestore(template.userId)) {
       try {
         await setDoc(doc(firestore, "templates", template.id), template);
         return;
@@ -326,7 +342,7 @@ export const db = {
   },
 
   deleteTemplate: async (id: string) => {
-    if (db.isRealMode && firestore) {
+    if (isReal && firestore) {
       try {
         await deleteDoc(doc(firestore, "templates", id));
         return;
@@ -339,7 +355,7 @@ export const db = {
 
   // --- DAILY PLANS ---
   getDailyPlan: async (userId: string, date: string): Promise<DailyPlan | null> => {
-    if (db.isRealMode && firestore) {
+    if (useFirestore(userId)) {
       try {
         const q = query(
           collection(firestore, "daily_plans"), 
@@ -360,7 +376,7 @@ export const db = {
   },
 
   saveDailyPlan: async (plan: DailyPlan) => {
-    if (db.isRealMode && firestore) {
+    if (useFirestore(plan.userId)) {
       try {
         const docId = `${plan.userId}_${plan.date}`;
         await setDoc(doc(firestore, "daily_plans", docId), plan);
