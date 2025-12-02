@@ -1,0 +1,17 @@
+{
+  "short_name": "TaskFlow",
+  "name": "TaskFlow AI Manager",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/12222/12222560.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "background_color": "#0b090a",
+  "display": "standalone",
+  "scope": "/",
+  "theme_color": "#0b090a",
+  "orientation": "portrait"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "TaskFlow AI",
+  "description": "A smart task manager that uses Gemini to parse natural language tasks, syncs with Google Calendar, and drafts motivational reminder emails.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
