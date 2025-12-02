@@ -3,7 +3,7 @@ import { Task, ScheduleItem, PlanTemplate, IconKey } from '../types';
 import { generateDailyPlan } from '../services/geminiService';
 import { getScheduleCalendarUrl } from '../utils/dateUtils';
 import { db } from '../services/databaseService';
-import { Loader2, Sparkles, Coffee, Briefcase, Zap, Calendar, ArrowRight, BrainCircuit, Clock, Sun, Plus, X, Save, List } from 'lucide-react';
+import { Loader2, Sparkles, Coffee, Briefcase, Zap, Calendar, ArrowRight, BrainCircuit, Clock, Sun, Plus, X, Save, List, RotateCcw } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { useToast } from './Toast';
 
@@ -109,6 +109,29 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
     } catch (error) {
       console.error(error);
       addToast("Failed to generate plan. Please try again.", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!window.confirm("Are you sure you want to clear the current plan and notes?")) return;
+    
+    setLoading(true);
+    try {
+      setSchedule([]);
+      setNotes('');
+      
+      // Save empty state to DB to persist the reset
+      await db.saveDailyPlan({
+        date: selectedDate,
+        userId: userId,
+        schedule: [],
+        notes: ''
+      });
+      addToast("Plan reset successfully", "success");
+    } catch (e) {
+      addToast("Failed to reset plan", "error");
     } finally {
       setLoading(false);
     }
@@ -234,6 +257,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
             {allTemplates.map((t) => (
               <button
                 key={t.id}
+                type="button"
                 onClick={() => setNotes(t.prompt)}
                 className="group flex items-center gap-2 px-3 py-1.5 rounded-full bg-onyx border border-garnet/30 text-xs text-silver hover:text-smoke hover:border-strawberry/50 hover:bg-garnet/10 transition-all active:scale-95 relative"
               >
@@ -252,6 +276,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
             
             {/* Add Button */}
             <button
+              type="button"
               onClick={() => setIsModalOpen(true)}
               className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-onyx border border-dashed border-garnet/40 text-xs text-strawberry hover:bg-garnet/10 hover:border-strawberry transition-all"
             >
@@ -261,11 +286,22 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
           </div>
         </div>
 
-        <div className="flex justify-end pt-2 border-t border-garnet/20">
+        <div className="flex justify-end pt-4 border-t border-garnet/20 gap-3">
           <button
+            type="button"
+            onClick={handleReset}
+            disabled={loading || (!notes && schedule.length === 0)}
+            className="px-4 py-2.5 rounded-lg font-medium text-silver hover:text-strawberry hover:bg-garnet/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-transparent hover:border-strawberry/30 flex items-center gap-2"
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span className="hidden sm:inline">Reset</span>
+          </button>
+          
+          <button
+            type="button"
             onClick={handleGenerate}
             disabled={loading}
-            className="w-full sm:w-auto bg-mahogany hover:bg-ruby disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-black/20"
+            className="bg-mahogany hover:bg-ruby disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-black/20"
           >
             {loading ? (
               <>
@@ -320,6 +356,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
                         {item.time}
                       </span>
                       <button
+                        type="button"
                         onClick={() => handleAddToCalendar(item)}
                         className="text-silver hover:text-strawberry transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
                         title="Add to Calendar"
@@ -345,6 +382,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-carbon border border-garnet/30 rounded-xl shadow-2xl w-full max-w-md p-6 relative">
             <button 
+              type="button"
               onClick={() => setIsModalOpen(false)}
               className="absolute top-4 right-4 text-silver hover:text-white transition-colors"
             >
@@ -385,6 +423,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
                   {(['zap', 'brain', 'clock', 'briefcase', 'coffee', 'sun', 'list'] as IconKey[]).map((key) => (
                     <button
                       key={key}
+                      type="button"
                       onClick={() => setNewIconKey(key)}
                       className={`p-2 rounded-md transition-all ${
                         newIconKey === key 
@@ -401,12 +440,14 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
 
             <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-garnet/20">
               <button
+                type="button"
                 onClick={() => setIsModalOpen(false)}
                 className="px-4 py-2 rounded-lg text-sm font-medium text-silver hover:text-white hover:bg-garnet/10 transition-colors"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={saveCustomTemplate}
                 disabled={!newLabel.trim() || !newPrompt.trim()}
                 className="bg-mahogany hover:bg-ruby disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all shadow-md"

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { TaskInput } from './components/TaskInput';
 import { TaskItem } from './components/TaskItem';
 import { PlannerView } from './components/PlannerView';
-import { Task, EmailContact } from './types';
+import { Task, EmailContact, UserProfile } from './types';
 import { Layout, Calendar as CalendarIcon, Info, Sparkles, Loader2, Mail, CheckCircle2, Plus, Trash2, Users, ListTodo, CalendarClock, XCircle } from 'lucide-react';
 import { generateDailyBriefing } from './services/geminiService';
 import { getMailtoLink } from './utils/dateUtils';
@@ -13,9 +13,15 @@ import { Confetti } from './components/Confetti';
 
 type ViewMode = 'tasks' | 'planner';
 
-const GUEST_ID = 'guest-user';
-
 const App: React.FC = () => {
+  // Initialize as Guest User immediately
+  const [user] = useState<UserProfile>({
+    id: 'guest-user',
+    name: 'Guest',
+    email: 'guest@taskflow.ai',
+    joinedAt: new Date().toISOString()
+  });
+
   const [view, setView] = useState<ViewMode>('tasks');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [emailContacts, setEmailContacts] = useState<EmailContact[]>([]);
@@ -28,17 +34,19 @@ const App: React.FC = () => {
   const [showConfetti, setShowConfetti] = useState(false);
   const { addToast } = useToast();
 
-  // Load Data Immediately on Mount
+  // Load Data when User Changes
   useEffect(() => {
-    loadUserData();
-  }, []);
+    if (user) {
+      loadUserData(user.id);
+    }
+  }, [user]);
 
-  const loadUserData = async () => {
+  const loadUserData = async (userId: string) => {
     setIsDataLoading(true);
     try {
       const [fetchedTasks, fetchedContacts] = await Promise.all([
-        db.getTasks(GUEST_ID),
-        db.getContacts(GUEST_ID)
+        db.getTasks(userId),
+        db.getContacts(userId)
       ]);
       setTasks(fetchedTasks);
       setEmailContacts(fetchedContacts);
@@ -51,7 +59,8 @@ const App: React.FC = () => {
   };
 
   const addTask = async (taskData: any) => {
-    const newTask: Task = { ...taskData, userId: GUEST_ID };
+    if (!user) return;
+    const newTask: Task = { ...taskData, userId: user.id };
     
     // Optimistic update
     setTasks(prev => [newTask, ...prev]);
@@ -62,7 +71,7 @@ const App: React.FC = () => {
     } catch (e) {
       console.error(e);
       addToast('Failed to save task', 'error');
-      loadUserData();
+      loadUserData(user.id);
     }
   };
 
@@ -72,15 +81,17 @@ const App: React.FC = () => {
       await db.deleteTask(id);
       addToast('Task deleted', 'success');
     } catch (e) {
-       loadUserData();
+       if (user) loadUserData(user.id);
     }
   };
 
-  const clearCompletedTasks = async () => {
+  const clearCompletedTasks = async (e?: React.MouseEvent) => {
+    if (!user) return;
+    e?.stopPropagation();
     if (window.confirm("Are you sure you want to remove all completed tasks?")) {
         try {
-          await db.clearCompletedTasks(GUEST_ID);
-          const freshTasks = await db.getTasks(GUEST_ID);
+          await db.clearCompletedTasks(user.id);
+          const freshTasks = await db.getTasks(user.id);
           setTasks(freshTasks);
           addToast('Completed tasks cleared', 'success');
         } catch (e) {
@@ -102,24 +113,24 @@ const App: React.FC = () => {
     try {
       await db.updateTask(updatedTask);
     } catch (e) {
-      loadUserData();
+      if (user) loadUserData(user.id);
     }
   };
 
   // Email Management Logic
   const addEmail = async () => {
-    if (!newEmailAddress || !newEmailAddress.includes('@')) return;
+    if (!user || !newEmailAddress || !newEmailAddress.includes('@')) return;
     
     const newContact: EmailContact = { 
         id: uuidv4(), 
-        userId: GUEST_ID,
+        userId: user.id,
         address: newEmailAddress.trim(), 
         isActive: true 
     };
     
     try {
       await db.addContact(newContact);
-      const freshContacts = await db.getContacts(GUEST_ID);
+      const freshContacts = await db.getContacts(user.id);
       setEmailContacts(freshContacts);
       setNewEmailAddress('');
       addToast('Email contact added', 'success');
@@ -129,9 +140,10 @@ const App: React.FC = () => {
   };
 
   const deleteEmail = async (id: string) => {
+    if (!user) return;
     try {
       await db.deleteContact(id);
-      const freshContacts = await db.getContacts(GUEST_ID);
+      const freshContacts = await db.getContacts(user.id);
       setEmailContacts(freshContacts);
       addToast('Email contact removed', 'success');
     } catch (e) {
@@ -140,12 +152,13 @@ const App: React.FC = () => {
   };
 
   const toggleEmailActive = async (id: string) => {
+    if (!user) return;
     const contact = emailContacts.find(c => c.id === id);
     if (contact) {
         const updated = { ...contact, isActive: !contact.isActive };
         try {
           await db.updateContact(updated);
-          const freshContacts = await db.getContacts(GUEST_ID);
+          const freshContacts = await db.getContacts(user.id);
           setEmailContacts(freshContacts);
         } catch(e) { console.error(e); }
     }
@@ -292,14 +305,14 @@ const App: React.FC = () => {
                   TaskFlow
                 </h1>
                 <p className="text-xs text-silver/60 font-medium tracking-wide mt-0.5">
-                  Welcome <span className="text-strawberry">Guest</span>
-                  {!db.isRealMode && <span className="ml-2 text-[10px] bg-garnet/30 text-strawberry px-1.5 py-0.5 rounded border border-garnet/50">DEMO MODE</span>}
+                  Welcome <span className="text-strawberry">{user.name}</span>
                 </p>
               </div>
             </div>
             
             <div className="flex items-center gap-2">
                <button
+                type="button"
                 onClick={handleDailyBriefing}
                 disabled={isBriefingLoading || emailContacts.filter(c => c.isActive).length === 0}
                 className="hidden sm:flex items-center gap-2 bg-garnet/20 hover:bg-garnet/40 disabled:opacity-50 text-silver hover:text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border border-garnet/30"
@@ -314,6 +327,7 @@ const App: React.FC = () => {
           {/* Navigation Tabs */}
           <div className="flex items-center gap-6 mt-1">
             <button 
+              type="button"
               onClick={() => setView('tasks')}
               className={`pb-3 text-sm font-medium transition-all relative ${
                 view === 'tasks' ? 'text-strawberry' : 'text-silver hover:text-smoke'
@@ -327,6 +341,7 @@ const App: React.FC = () => {
             </button>
             
             <button 
+              type="button"
               onClick={() => setView('planner')}
               className={`pb-3 text-sm font-medium transition-all relative ${
                 view === 'planner' ? 'text-strawberry' : 'text-silver hover:text-smoke'
@@ -407,11 +422,16 @@ const App: React.FC = () => {
                               />
                             </label>
                             <button 
-                              onClick={() => deleteEmail(contact.id)}
-                              className="text-silver hover:text-strawberry p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                deleteEmail(contact.id);
+                              }}
+                              className="text-silver hover:text-strawberry p-2 rounded hover:bg-onyx transition-colors ml-2"
                               title="Remove email"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
                         ))}
@@ -430,6 +450,7 @@ const App: React.FC = () => {
                         className="flex-1 bg-onyx border border-garnet/30 rounded-md px-3 py-1.5 text-sm text-smoke placeholder:text-silver/40 focus:border-strawberry outline-none transition-colors"
                       />
                       <button 
+                        type="button"
                         onClick={addEmail}
                         disabled={!newEmailAddress.includes('@')}
                         className="bg-mahogany hover:bg-ruby disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1 shadow-md shadow-black/20"
@@ -443,6 +464,7 @@ const App: React.FC = () => {
                   {/* Mobile Briefing Button */}
                   <div className="mt-4 sm:hidden">
                     <button
+                        type="button"
                         onClick={handleDailyBriefing}
                         disabled={isBriefingLoading || emailContacts.filter(c => c.isActive).length === 0}
                         className="w-full flex items-center justify-center gap-2 bg-garnet/30 text-smoke px-3 py-2 rounded-lg text-xs border border-garnet/40"
@@ -486,6 +508,7 @@ const App: React.FC = () => {
                                 Completed Tasks
                             </h3>
                             <button 
+                                type="button"
                                 onClick={clearCompletedTasks}
                                 className="text-xs flex items-center gap-1 text-silver/40 hover:text-strawberry transition-colors"
                             >
@@ -512,7 +535,7 @@ const App: React.FC = () => {
             )}
           </div>
         ) : (
-          <PlannerView tasks={tasks} userId={GUEST_ID} />
+          <PlannerView tasks={tasks} userId={user.id} />
         )}
       </main>
     </div>

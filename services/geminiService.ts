@@ -7,6 +7,20 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const modelId = "gemini-2.5-flash";
 
+// Helper to clean potential markdown formatting from JSON responses
+const cleanJSON = (text: string) => {
+  if (!text) return "";
+  
+  // Try to find JSON object or array
+  const match = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+  if (match) {
+      return match[0];
+  }
+  
+  // Remove markdown code blocks like ```json ... ``` or ``` ... ```
+  return text.replace(/```(?:json)?\n?/g, "").replace(/```/g, "").trim();
+};
+
 /**
  * Parses natural language input into a structured task object.
  */
@@ -49,7 +63,7 @@ export const parseTaskFromInput = async (input: string): Promise<ParsedTaskRespo
     throw new Error("Failed to generate task details");
   }
 
-  return JSON.parse(response.text) as ParsedTaskResponse;
+  return JSON.parse(cleanJSON(response.text)) as ParsedTaskResponse;
 };
 
 /**
@@ -88,7 +102,7 @@ export const generateReminderEmail = async (taskTitle: string, dueDate: string, 
     throw new Error("Failed to generate email draft");
   }
 
-  return JSON.parse(response.text) as AIGeneratedEmail;
+  return JSON.parse(cleanJSON(response.text)) as AIGeneratedEmail;
 };
 
 /**
@@ -101,7 +115,7 @@ export const breakDownTask = async (taskTitle: string, taskDescription: string):
     
     Break this task down into 3 to 5 actionable, small sub-steps.
     Keep them concise (under 10 words each).
-    Return just the list of steps.
+    Return a JSON object containing a list of steps.
   `;
 
   const response = await ai.models.generateContent({
@@ -126,7 +140,7 @@ export const breakDownTask = async (taskTitle: string, taskDescription: string):
     throw new Error("Failed to generate subtasks");
   }
 
-  return JSON.parse(response.text).steps;
+  return JSON.parse(cleanJSON(response.text)).steps;
 };
 
 /**
@@ -179,7 +193,7 @@ export const generateDailyBriefing = async (tasks: Task[]): Promise<AIGeneratedE
     throw new Error("Failed to generate briefing");
   }
 
-  return JSON.parse(response.text) as AIGeneratedEmail;
+  return JSON.parse(cleanJSON(response.text)) as AIGeneratedEmail;
 };
 
 /**
@@ -215,7 +229,7 @@ export const generateDailyPlan = async (tasks: Task[], notes: string, targetDate
     - Include short breaks.
     - Group similar tasks if possible.
     
-    Return a JSON array of schedule items.
+    Return a JSON object with a 'schedule' property containing the array of schedule items.
   `;
 
   const response = await ai.models.generateContent({
@@ -249,5 +263,5 @@ export const generateDailyPlan = async (tasks: Task[], notes: string, targetDate
     throw new Error("Failed to generate schedule");
   }
 
-  return JSON.parse(response.text).schedule;
+  return JSON.parse(cleanJSON(response.text)).schedule;
 };

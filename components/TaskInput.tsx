@@ -87,7 +87,10 @@ export const TaskInput: React.FC<TaskInputProps> = ({ onTaskCreate }) => {
   };
 
   const toggleListening = () => {
-    if (!('webkitSpeechRecognition' in window)) {
+    // Cross-browser support
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
       addToast("Speech recognition is not supported in this browser.", "error");
       return;
     }
@@ -96,7 +99,6 @@ export const TaskInput: React.FC<TaskInputProps> = ({ onTaskCreate }) => {
       setIsListening(false);
     } else {
       setIsListening(true);
-      const SpeechRecognition = (window as any).webkitSpeechRecognition;
       const recognition = new SpeechRecognition();
       recognition.continuous = false;
       recognition.interimResults = false;
