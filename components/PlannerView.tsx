@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Task, ScheduleItem, PlanTemplate, IconKey } from '../types';
+import { Task, ScheduleItem, PlanTemplate, IconKey, Mood } from '../types';
 import { generateDailyPlan } from '../services/geminiService';
 import { getScheduleCalendarUrl } from '../utils/dateUtils';
 import { db } from '../services/databaseService';
@@ -44,7 +44,6 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [isLoadingData, setIsLoadingData] = useState(false);
   
   // Custom Templates State
   const [customTemplates, setCustomTemplates] = useState<PlanTemplate[]>([]);
@@ -60,13 +59,11 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
   // Load data
   useEffect(() => {
     const fetchData = async () => {
-        setIsLoadingData(true);
         try {
             const savedTemplates = await db.getCustomTemplates(userId);
             setCustomTemplates(savedTemplates);
             await loadPlanForDate(selectedDate);
         } catch(e) { console.error(e) }
-        setIsLoadingData(false);
     }
     fetchData();
   }, [userId]);
@@ -94,7 +91,9 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
     }
     setLoading(true);
     try {
-      const planItems = await generateDailyPlan(tasks, notes, selectedDate);
+      // NOTE: In a real app, 'mood' would be passed down props, but we default 'focused' here for now
+      // since the Planner is typically an intentional act.
+      const planItems = await generateDailyPlan(tasks, notes, selectedDate, 'focused');
       setSchedule(planItems);
       
       // Save to DB
@@ -115,13 +114,14 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
   };
 
   const handleReset = async () => {
-    if (!window.confirm("Are you sure you want to clear the current plan and notes?")) return;
-    
+    // Removed blocking confirm dialog to ensure instant feedback and avoid browser restrictions
     setLoading(true);
+    
+    // Optimistic Update: Clear immediately
+    setSchedule([]);
+    setNotes('');
+
     try {
-      setSchedule([]);
-      setNotes('');
-      
       // Save empty state to DB to persist the reset
       await db.saveDailyPlan({
         date: selectedDate,
@@ -131,7 +131,8 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
       });
       addToast("Plan reset successfully", "success");
     } catch (e) {
-      addToast("Failed to reset plan", "error");
+      addToast("Failed to persist reset", "error");
+      // Revert if critical error (optional, but for now we keep UI clear)
     } finally {
       setLoading(false);
     }
@@ -290,10 +291,11 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
           <button
             type="button"
             onClick={handleReset}
-            disabled={loading || (!notes && schedule.length === 0)}
+            disabled={loading}
             className="px-4 py-2.5 rounded-lg font-medium text-silver hover:text-strawberry hover:bg-garnet/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-transparent hover:border-strawberry/30 flex items-center gap-2"
+            title="Clear the current plan and notes"
           >
-            <RotateCcw className="w-4 h-4" />
+            <RotateCcw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">Reset</span>
           </button>
           
@@ -320,7 +322,7 @@ export const PlannerView: React.FC<PlannerViewProps> = ({ tasks, userId }) => {
 
       {/* Results Section */}
       {schedule.length > 0 && (
-        <div className="bg-carbon border border-garnet/30 rounded-xl p-6 shadow-lg shadow-black/20 relative overflow-hidden">
+        <div className="bg-carbon border border-garnet/30 rounded-xl p-6 shadow-lg shadow-black/20 relative overflow-hidden animate-in fade-in zoom-in-95 duration-300">
           {/* Decorative background element */}
           <div className="absolute top-0 right-0 w-64 h-64 bg-strawberry/5 rounded-full blur-3xl pointer-events-none -translate-y-1/2 translate-x-1/2"></div>
 

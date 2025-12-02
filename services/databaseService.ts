@@ -34,15 +34,25 @@ const KEYS = {
   TEMPLATES: 'tf_templates',
   PLANS: 'tf_daily_plans',
   USERS: 'tf_users',
+  CURRENT_USER: 'tf_current_user_profile' // New key for persisting the guest profile
 };
 
 const getLocal = <T>(key: string): T[] => {
-  const data = localStorage.getItem(key);
-  return data ? JSON.parse(data) : [];
+  try {
+    const data = localStorage.getItem(key);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    console.error(`Error parsing ${key} from local storage`, e);
+    return [];
+  }
 };
 
 const setLocal = (key: string, data: any[]) => {
-  localStorage.setItem(key, JSON.stringify(data));
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    console.error(`Error saving ${key} to local storage`, e);
+  }
 };
 
 // ==========================================
@@ -64,11 +74,6 @@ if (isReal) {
   }
 }
 
-// Helper to check if we should use Firestore
-// We only use Firestore if:
-// 1. Config is present
-// 2. Firestore initialized
-// 3. User is NOT the guest user (Guests strictly use LocalStorage)
 const useFirestore = (userId?: string) => {
     return isReal && firestore && userId && userId !== 'guest-user';
 };
@@ -79,12 +84,42 @@ const useFirestore = (userId?: string) => {
 export const db = {
   isRealMode: isReal,
 
-  // --- AUTH ---
+  // --- AUTH / USER ---
+  // Gets the current local user or default guest
+  getCurrentUser: (): UserProfile => {
+    try {
+      const stored = localStorage.getItem(KEYS.CURRENT_USER);
+      if (stored) return JSON.parse(stored);
+    } catch (e) {}
+    
+    // Default Guest
+    const guest: UserProfile = {
+      id: 'guest-user',
+      name: 'Guest User',
+      email: 'guest@taskflow.ai',
+      joinedAt: new Date().toISOString()
+    };
+    // Persist default guest immediately so changes stick later
+    localStorage.setItem(KEYS.CURRENT_USER, JSON.stringify(guest));
+    return guest;
+  },
+
+  updateUserProfile: async (user: UserProfile) => {
+    // Always update local storage first for speed/offline support
+    localStorage.setItem(KEYS.CURRENT_USER, JSON.stringify(user));
+
+    if (useFirestore(user.id)) {
+       try {
+         if (firestore) await setDoc(doc(firestore, "users", user.id), user, { merge: true });
+       } catch (e) {}
+    }
+    return user;
+  },
+
   registerUser: async (user: UserProfile): Promise<UserProfile> => {
      if (isReal && auth) {
         const userCredential = await createUserWithEmailAndPassword(auth, user.email, user.password || 'password');
         const newUserProfile = { ...user, id: userCredential.user.uid, password: '' };
-        // Optionally save to 'users' collection
         try {
             if (firestore) await setDoc(doc(firestore, "users", newUserProfile.id), newUserProfile);
         } catch (e) { console.warn("Could not save user profile to firestore", e); }
@@ -92,7 +127,6 @@ export const db = {
      }
 
      // Local Simulation
-     await new Promise(resolve => setTimeout(resolve, 800));
      const users = getLocal<UserProfile>(KEYS.USERS);
      if (users.find(u => u.email === user.email)) {
         throw new Error("User already exists");
@@ -100,6 +134,7 @@ export const db = {
      const newUser = { ...user, id: `user_${Date.now()}` };
      users.push(newUser);
      setLocal(KEYS.USERS, users);
+     localStorage.setItem(KEYS.CURRENT_USER, JSON.stringify(newUser)); // Auto login
      return newUser;
   },
 
@@ -114,15 +149,19 @@ export const db = {
           };
       }
 
-      await new Promise(resolve => setTimeout(resolve, 800));
+      // Local 
       const users = getLocal<UserProfile>(KEYS.USERS);
-      // In demo mode, allow "admin/admin" or match stored users
+      // Backdoor for demo
       if (email === "demo@example.com" && pass === "password") {
-         return { id: "guest-user", name: "Guest User", email: "demo@example.com", joinedAt: new Date().toISOString() };
+         const demoUser = { id: "guest-user", name: "Guest User", email: "demo@example.com", joinedAt: new Date().toISOString() };
+         localStorage.setItem(KEYS.CURRENT_USER, JSON.stringify(demoUser));
+         return demoUser;
       }
 
       const user = users.find(u => u.email === email && u.password === pass);
       if (!user) throw new Error("Invalid credentials");
+      
+      localStorage.setItem(KEYS.CURRENT_USER, JSON.stringify(user));
       return user;
   },
 
@@ -131,7 +170,6 @@ export const db = {
           await sendPasswordResetEmail(auth, email);
           return;
       }
-      await new Promise(resolve => setTimeout(resolve, 800));
       return;
   },
 
@@ -150,7 +188,6 @@ export const db = {
                  email: result.user.email || '',
                  joinedAt: new Date().toISOString()
              };
-             // Save/Update user profile
              try {
                 if (firestore) await setDoc(doc(firestore, "users", profile.id), profile, { merge: true });
              } catch(e) {}
@@ -159,19 +196,21 @@ export const db = {
       }
       
       // Simulation
-      await new Promise(resolve => setTimeout(resolve, 800));
-      return {
+      const profile = {
           id: `social_${providerName}_${Date.now()}`,
           name: `${providerName.charAt(0).toUpperCase() + providerName.slice(1)} User`,
           email: `user@${providerName}.com`,
           joinedAt: new Date().toISOString()
       };
+      localStorage.setItem(KEYS.CURRENT_USER, JSON.stringify(profile));
+      return profile;
   },
 
   logout: async () => {
     if (isReal && auth) {
         await signOut(auth);
     }
+    localStorage.removeItem(KEYS.CURRENT_USER);
   },
 
   // --- TASKS ---
@@ -182,7 +221,7 @@ export const db = {
         const querySnapshot = await getDocs(q);
         return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Task));
       } catch (e) {
-        console.warn("Firestore access failed. Falling back to Local Storage.", e);
+        // Fallback to local if firestore fails
         return getLocal<Task>(KEYS.TASKS).filter(t => t.userId === userId);
       }
     } else {
@@ -195,9 +234,7 @@ export const db = {
       try {
         await setDoc(doc(firestore, "tasks", task.id), task);
         return;
-      } catch (e) {
-        console.warn("Firestore save failed.");
-      }
+      } catch (e) {}
     }
     const tasks = getLocal<Task>(KEYS.TASKS);
     tasks.unshift(task);
@@ -222,17 +259,11 @@ export const db = {
   },
 
   deleteTask: async (taskId: string) => {
-    // We can't easily check userId here without fetching, but deletions typically require Auth in rules.
-    // However, since we don't pass userId to deleteTask, we try firestore if globally enabled, 
-    // but knowing the caller usually provides a context.
-    // In this specific architecture, we should try firestore if isReal, but fallback safely.
     if (isReal && firestore) {
       try {
         await deleteDoc(doc(firestore, "tasks", taskId));
         return;
-      } catch (e) {
-          // If permission denied (guest user), we fall through to local
-      }
+      } catch (e) {}
     }
     const tasks = getLocal<Task>(KEYS.TASKS);
     const filtered = tasks.filter(t => t.id !== taskId);
@@ -329,7 +360,6 @@ export const db = {
   },
 
   addTemplate: async (template: PlanTemplate) => {
-    // Templates might not have userId if they are defaults, handle safely
     if (template.userId && useFirestore(template.userId)) {
       try {
         await setDoc(doc(firestore, "templates", template.id), template);

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Task, Priority, TaskStatus, Subtask } from '../types';
-import { Calendar, Mail, CheckCircle2, Circle, Trash2, ExternalLink, Loader2, Clock, Split, CheckSquare, Edit2, Save, X, Plus } from 'lucide-react';
-import { formatDate, getGoogleCalendarUrl, getMailtoLink } from '../utils/dateUtils';
+import { Task, Priority, TaskStatus, Subtask, Mood, AIPersona } from '../types';
+import { Calendar, Mail, CheckCircle2, Circle, Trash2, ExternalLink, Loader2, Clock, Split, CheckSquare, Edit2, Save, X, Plus, Tag, Link2, FileText, AlertTriangle } from 'lucide-react';
+import { formatDate, getGoogleCalendarUrl, getMailtoLink, toLocalInputString } from '../utils/dateUtils';
 import { generateReminderEmail, breakDownTask } from '../services/geminiService';
 import { v4 as uuidv4 } from 'uuid';
 import { useToast } from './Toast';
@@ -10,10 +10,12 @@ interface TaskItemProps {
   task: Task;
   onUpdate: (task: Task) => void;
   onDelete: (id: string) => void;
-  recipients: string; // Comma separated emails
+  recipients: string;
+  userMood: Mood;
+  persona: AIPersona;
 }
 
-export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, recipients }) => {
+export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, recipients, userMood, persona }) => {
   const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
   const [isBreakingDown, setIsBreakingDown] = useState(false);
   const { addToast } = useToast();
@@ -28,7 +30,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, re
   // Manual Subtask State
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
 
-  // New Priority colors for the Red/Black theme
   const priorityColors = {
     [Priority.LOW]: 'bg-carbon text-silver border-silver/30',
     [Priority.MEDIUM]: 'bg-carbon text-dust border-strawberry/30',
@@ -76,7 +77,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, re
 
     setIsGeneratingEmail(true);
     try {
-      const emailContent = await generateReminderEmail(task.title, task.dueDate, task.priority);
+      const emailContent = await generateReminderEmail(task.title, task.dueDate, task.priority, userMood, persona);
       const mailto = getMailtoLink(recipients, emailContent.subject, emailContent.body);
       window.location.href = mailto;
       addToast("Email draft opened", "success");
@@ -160,8 +161,14 @@ export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, re
                 <div className="grid grid-cols-2 gap-3">
                     <input 
                         type="datetime-local"
-                        value={editDate.substring(0, 16)} // Format for input
-                        onChange={(e) => setEditDate(new Date(e.target.value).toISOString())}
+                        // Bug Fix: Use helper to get local string for input to avoid timezone shift
+                        value={toLocalInputString(editDate)} 
+                        onChange={(e) => {
+                            // When parsing input back, create date object and convert to ISO (UTC)
+                            if (e.target.value) {
+                                setEditDate(new Date(e.target.value).toISOString());
+                            }
+                        }}
                         className="bg-onyx text-silver text-xs p-2 rounded border border-garnet/40 focus:border-strawberry outline-none [color-scheme:dark]"
                     />
                     <select
@@ -186,7 +193,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, re
   }
 
   return (
-    <div className={`group bg-carbon rounded-xl border transition-all hover:border-strawberry/40 ${
+    <div className={`group bg-carbon rounded-xl border transition-all hover:border-strawberry/40 animate-in fade-in slide-in-from-bottom-1 duration-300 ${
       task.status === TaskStatus.COMPLETED ? 'border-garnet/20 opacity-60' : 'border-garnet/40'
     }`}>
       <div className="p-4">
@@ -194,6 +201,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, re
           <button
             onClick={handleStatusChange}
             className="mt-1 text-silver hover:text-strawberry transition-colors shrink-0"
+            title={task.status === TaskStatus.COMPLETED ? "Mark as TODO" : "Mark as Done"}
           >
             {task.status === TaskStatus.COMPLETED ? (
               <CheckCircle2 className="w-6 h-6 text-strawberry" />
@@ -214,17 +222,38 @@ export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, re
               </span>
             </div>
 
-            <p className={`text-sm mt-1 mb-3 ${
+            <p className={`text-sm mt-1 mb-2 ${
               task.status === TaskStatus.COMPLETED ? 'text-silver/50' : 'text-silver'
             }`}>
               {task.description}
             </p>
 
+            {/* Tags & Attachments & Dependencies Row */}
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+                {task.tags?.map((tag, idx) => (
+                    <span key={idx} className="flex items-center gap-1 text-[10px] text-silver/70 bg-onyx px-2 py-0.5 rounded border border-garnet/20">
+                        <Tag className="w-2.5 h-2.5" /> #{tag.replace('#','')}
+                    </span>
+                ))}
+                
+                {task.attachments?.map((att, idx) => (
+                     <span key={idx} className="flex items-center gap-1 text-[10px] text-strawberry bg-strawberry/10 px-2 py-0.5 rounded border border-strawberry/20 cursor-pointer hover:bg-strawberry/20" title="Attachment">
+                        <FileText className="w-2.5 h-2.5" /> {att.name}
+                    </span>
+                ))}
+
+                {task.dependencies?.length ? (
+                     <span className="flex items-center gap-1 text-[10px] text-mahogany bg-mahogany/10 px-2 py-0.5 rounded border border-mahogany/20" title="This task is blocked by others">
+                        <Link2 className="w-2.5 h-2.5" /> Blocked
+                    </span>
+                ) : null}
+            </div>
+
             {/* Subtasks Section */}
             {(task.subtasks?.length || 0) > 0 || isBreakingDown ? (
               <div className="mb-4 space-y-2 bg-onyx/50 p-3 rounded-lg border border-garnet/30">
                 <p className="text-xs font-medium text-silver/70 mb-2 flex justify-between">
-                    <span>Steps:</span>
+                    <span>Action Steps:</span>
                     <span className="text-[10px]">{task.subtasks?.filter(t => t.isCompleted).length}/{task.subtasks?.length}</span>
                 </p>
                 
@@ -244,7 +273,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, re
                   </div>
                 ))}
 
-                {/* Manual Subtask Add */}
                 <div className="flex items-center gap-2 mt-2 pt-2 border-t border-garnet/20">
                     <Plus className="w-3.5 h-3.5 text-silver/50" />
                     <input 
@@ -285,7 +313,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, re
                     ) : (
                       <Split className="w-3.5 h-3.5" />
                     )}
-                    <span className="hidden sm:inline">Break Down</span>
+                    <span className="hidden sm:inline">Refine</span>
                   </button>
                 )}
 
@@ -296,8 +324,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, re
                   title="Add to Google Calendar"
                 >
                   <Calendar className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Calendar</span>
-                  <ExternalLink className="w-3 h-3 opacity-50" />
                 </button>
 
                 {/* Email Action */}
@@ -312,7 +338,6 @@ export const TaskItem: React.FC<TaskItemProps> = ({ task, onUpdate, onDelete, re
                   ) : (
                     <Mail className="w-3.5 h-3.5" />
                   )}
-                  <span className="hidden sm:inline">Draft</span>
                 </button>
 
                 {/* Edit Action */}

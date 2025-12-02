@@ -2,25 +2,28 @@ import React, { useState, useEffect } from 'react';
 import { TaskInput } from './components/TaskInput';
 import { TaskItem } from './components/TaskItem';
 import { PlannerView } from './components/PlannerView';
-import { Task, EmailContact, UserProfile } from './types';
-import { Layout, Calendar as CalendarIcon, Info, Sparkles, Loader2, Mail, CheckCircle2, Plus, Trash2, Users, ListTodo, CalendarClock, XCircle } from 'lucide-react';
+import { AnalyticsView } from './components/AnalyticsView';
+import { Task, EmailContact, UserProfile, Mood, AIPersona } from './types';
+import { Calendar as CalendarIcon, Info, Sparkles, Loader2, Mail, CheckCircle2, Plus, Trash2, Users, ListTodo, CalendarClock, XCircle, BarChart3, Zap, Brain, Slack, Trello, Smile, Timer, User as UserIcon, X, Save, LogOut, LogIn, Check } from 'lucide-react';
 import { generateDailyBriefing } from './services/geminiService';
 import { getMailtoLink } from './utils/dateUtils';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './services/databaseService';
 import { useToast } from './components/Toast';
 import { Confetti } from './components/Confetti';
+import { LoginPage } from './components/LoginPage';
+import { SignupPage } from './components/SignupPage';
 
-type ViewMode = 'tasks' | 'planner';
+type ViewMode = 'tasks' | 'planner' | 'analytics';
+type AuthMode = 'app' | 'login' | 'signup';
 
 const App: React.FC = () => {
-  // Initialize as Guest User immediately
-  const [user] = useState<UserProfile>({
-    id: 'guest-user',
-    name: 'Guest',
-    email: 'guest@taskflow.ai',
-    joinedAt: new Date().toISOString()
-  });
+  // User Profile State - Persisted locally
+  // db.getCurrentUser() guarantees a return value (Guest or stored)
+  const [user, setUser] = useState<UserProfile>(() => db.getCurrentUser());
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [tempName, setTempName] = useState('');
+  const [authMode, setAuthMode] = useState<AuthMode>('app');
 
   const [view, setView] = useState<ViewMode>('tasks');
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -29,17 +32,49 @@ const App: React.FC = () => {
   const [isBriefingLoading, setIsBriefingLoading] = useState(false);
   const [isDataLoading, setIsDataLoading] = useState(false);
   
+  // Mood & Persona
+  const [mood, setMood] = useState<Mood>('neutral');
+  const [persona, setPersona] = useState<AIPersona>('motivator');
+  
+  // Pomodoro
+  const [pomodoroTime, setPomodoroTime] = useState(25 * 60);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+
   // Search, Progress, and Rewards
   const [searchQuery, setSearchQuery] = useState('');
   const [showConfetti, setShowConfetti] = useState(false);
   const { addToast } = useToast();
 
-  // Load Data when User Changes
+  // Integrations State (Visual Mock)
+  const [activeIntegrations, setActiveIntegrations] = useState<string[]>([]);
+
+  // Load Data
   useEffect(() => {
     if (user) {
       loadUserData(user.id);
     }
-  }, [user]);
+  }, [user.id]); // Reload if user ID changes
+
+  // Pomodoro Timer Logic
+  useEffect(() => {
+    let interval: any;
+    if (isTimerRunning && pomodoroTime > 0) {
+        interval = setInterval(() => setPomodoroTime(t => t - 1), 1000);
+    } else if (pomodoroTime === 0) {
+        setIsTimerRunning(false);
+        addToast("Focus session complete!", "success");
+        setShowConfetti(true);
+        setTimeout(() => setShowConfetti(false), 3000);
+    }
+    return () => clearInterval(interval);
+  }, [isTimerRunning, pomodoroTime]);
+
+  const toggleTimer = () => setIsTimerRunning(!isTimerRunning);
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
 
   const loadUserData = async (userId: string) => {
     setIsDataLoading(true);
@@ -58,6 +93,35 @@ const App: React.FC = () => {
     }
   };
 
+  const handleUpdateProfile = async () => {
+      if (!tempName.trim()) return;
+      const updatedUser = { ...user, name: tempName };
+      await db.updateUserProfile(updatedUser);
+      setUser(updatedUser); // Update local state immediately
+      setIsEditingProfile(false);
+      addToast("Profile updated", "success");
+  };
+
+  const openProfileEdit = () => {
+      setTempName(user.name);
+      setIsEditingProfile(true);
+  };
+
+  const handleLoginSuccess = (loggedInUser: UserProfile) => {
+      setUser(loggedInUser);
+      setAuthMode('app');
+      addToast(`Welcome back, ${loggedInUser.name}!`, 'success');
+  };
+
+  const handleLogout = async () => {
+      await db.logout();
+      // Reset to guest
+      const guest = db.getCurrentUser();
+      setUser(guest);
+      setAuthMode('app'); // Stay in app as guest
+      addToast("Logged out successfully", "info");
+  };
+
   const addTask = async (taskData: any) => {
     if (!user) return;
     const newTask: Task = { ...taskData, userId: user.id };
@@ -67,7 +131,6 @@ const App: React.FC = () => {
     
     try {
       await db.addTask(newTask);
-      addToast('Task created successfully', 'success');
     } catch (e) {
       console.error(e);
       addToast('Failed to save task', 'error');
@@ -177,7 +240,7 @@ const App: React.FC = () => {
     
     setIsBriefingLoading(true);
     try {
-      const emailContent = await generateDailyBriefing(tasks);
+      const emailContent = await generateDailyBriefing(tasks, mood, persona);
       const mailto = getMailtoLink(recipients, emailContent.subject, emailContent.body);
       window.location.href = mailto;
       addToast('Briefing generated!', 'success');
@@ -187,6 +250,17 @@ const App: React.FC = () => {
     } finally {
       setIsBriefingLoading(false);
     }
+  };
+
+  // Mock integration click with toggle state
+  const handleIntegrationClick = (name: string) => {
+      if (activeIntegrations.includes(name)) {
+          setActiveIntegrations(prev => prev.filter(i => i !== name));
+          addToast(`${name} disconnected.`, "info");
+      } else {
+          setActiveIntegrations(prev => [...prev, name]);
+          addToast(`${name} connected successfully!`, "success");
+      }
   };
 
   // Group tasks logic
@@ -222,20 +296,18 @@ const App: React.FC = () => {
       }
     });
 
-    // Sort by date inside groups
     const sorter = (a: Task, b: Task) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
     
     return {
       overdue: overdue.sort(sorter),
       today: today.sort(sorter),
       upcoming: upcoming.sort(sorter),
-      completed: completed.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) // Most recently completed first
+      completed: completed.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     };
   };
 
   const groupedTasks = groupTasks();
 
-  // Progress Calculation
   const getTodayProgress = () => {
     const now = new Date();
     const todayStr = now.toDateString();
@@ -254,7 +326,7 @@ const App: React.FC = () => {
   const renderGroup = (title: string, groupTasks: Task[], icon: React.ReactNode, colorClass: string) => {
     if (groupTasks.length === 0) return null;
     return (
-      <div className="mb-6">
+      <div className="mb-6 animate-in slide-in-from-bottom-2 duration-500">
         <h3 className={`text-sm font-bold uppercase tracking-wider mb-3 flex items-center gap-2 ${colorClass}`}>
           {icon}
           {title} 
@@ -270,6 +342,8 @@ const App: React.FC = () => {
               onUpdate={updateTask}
               onDelete={deleteTask}
               recipients={getActiveRecipients()}
+              userMood={mood}
+              persona={persona}
             />
           ))}
         </div>
@@ -277,13 +351,21 @@ const App: React.FC = () => {
     );
   };
 
+  if (authMode === 'login') {
+    return <LoginPage onLogin={handleLoginSuccess} onGotoSignup={() => setAuthMode('signup')} />;
+  }
+
+  if (authMode === 'signup') {
+    return <SignupPage onLogin={handleLoginSuccess} onBack={() => setAuthMode('login')} />;
+  }
+
   return (
     <div className="min-h-screen bg-onyx text-smoke pb-20 font-sans">
       {showConfetti && <Confetti />}
       
       {/* Header */}
       <header className="bg-onyx/90 border-b border-garnet/30 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-3xl mx-auto px-4 pt-3 pb-0 flex flex-col gap-3">
+        <div className="max-w-4xl mx-auto px-4 pt-3 pb-0 flex flex-col gap-3">
           
           {/* Top Bar */}
           <div className="flex items-center justify-between">
@@ -304,13 +386,59 @@ const App: React.FC = () => {
                 <h1 className="font-bold text-2xl tracking-tighter text-white leading-none">
                   TaskFlow
                 </h1>
-                <p className="text-xs text-silver/60 font-medium tracking-wide mt-0.5">
-                  Welcome <span className="text-strawberry">{user.name}</span>
-                </p>
+                <div className="flex items-center gap-2">
+                    <p className="text-xs text-silver/60 font-medium tracking-wide mt-0.5 hidden sm:block">
+                    Welcome <span className="text-strawberry">{user.name}</span>
+                    </p>
+                    <button onClick={openProfileEdit} className="text-[10px] text-silver/40 hover:text-silver border border-garnet/20 px-1.5 rounded hover:bg-carbon transition-colors">
+                        Edit
+                    </button>
+                    <div className="h-3 w-px bg-garnet/30 mx-1"></div>
+                    {user.id === 'guest-user' ? (
+                        <button onClick={() => setAuthMode('login')} className="text-[10px] text-strawberry hover:text-white flex items-center gap-1 transition-colors">
+                            <LogIn className="w-3 h-3"/> Login
+                        </button>
+                    ) : (
+                        <button onClick={handleLogout} className="text-[10px] text-silver/40 hover:text-white flex items-center gap-1 transition-colors">
+                            <LogOut className="w-3 h-3"/> Logout
+                        </button>
+                    )}
+                </div>
               </div>
             </div>
             
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+               
+               {/* Mood Selector */}
+               <div className="hidden md:flex items-center bg-carbon border border-garnet/30 rounded-lg p-0.5">
+                  {(['focused', 'creative', 'stress', 'neutral'] as const).map((m) => (
+                    <button
+                        key={m}
+                        onClick={() => setMood(m === 'stress' ? 'stressed' : m)}
+                        className={`p-1.5 rounded transition-all ${
+                            (mood === m || (m === 'stress' && mood === 'stressed')) ? 'bg-garnet text-white' : 'text-silver hover:text-smoke'
+                        }`}
+                        title={`Set mood: ${m}`}
+                    >
+                        {m === 'focused' && <Zap className="w-4 h-4"/>}
+                        {m === 'creative' && <Brain className="w-4 h-4"/>}
+                        {m === 'stress' && <Smile className="w-4 h-4 rotate-180"/>}
+                        {m === 'neutral' && <Smile className="w-4 h-4"/>}
+                    </button>
+                  ))}
+               </div>
+
+               {/* Pomodoro Timer Mini */}
+               <button 
+                onClick={toggleTimer}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border ${
+                    isTimerRunning ? 'bg-strawberry text-white border-strawberry' : 'bg-carbon border-garnet/30 text-silver hover:text-white'
+                }`}
+               >
+                   <Timer className={`w-4 h-4 ${isTimerRunning ? 'animate-pulse' : ''}`}/>
+                   <span className="font-mono">{formatTime(pomodoroTime)}</span>
+               </button>
+
                <button
                 type="button"
                 onClick={handleDailyBriefing}
@@ -325,17 +453,17 @@ const App: React.FC = () => {
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex items-center gap-6 mt-1">
+          <div className="flex items-center gap-6 mt-1 overflow-x-auto no-scrollbar">
             <button 
               type="button"
               onClick={() => setView('tasks')}
-              className={`pb-3 text-sm font-medium transition-all relative ${
+              className={`pb-3 text-sm font-medium transition-all relative shrink-0 ${
                 view === 'tasks' ? 'text-strawberry' : 'text-silver hover:text-smoke'
               }`}
             >
               <div className="flex items-center gap-2">
                 <ListTodo className="w-4 h-4" />
-                My Tasks
+                Tasks
               </div>
               {view === 'tasks' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-strawberry rounded-t-full" />}
             </button>
@@ -343,7 +471,7 @@ const App: React.FC = () => {
             <button 
               type="button"
               onClick={() => setView('planner')}
-              className={`pb-3 text-sm font-medium transition-all relative ${
+              className={`pb-3 text-sm font-medium transition-all relative shrink-0 ${
                 view === 'planner' ? 'text-strawberry' : 'text-silver hover:text-smoke'
               }`}
             >
@@ -353,14 +481,28 @@ const App: React.FC = () => {
               </div>
               {view === 'planner' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-strawberry rounded-t-full" />}
             </button>
+
+            <button 
+              type="button"
+              onClick={() => setView('analytics')}
+              className={`pb-3 text-sm font-medium transition-all relative shrink-0 ${
+                view === 'analytics' ? 'text-strawberry' : 'text-silver hover:text-smoke'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4" />
+                Analytics
+              </div>
+              {view === 'analytics' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-strawberry rounded-t-full" />}
+            </button>
           </div>
 
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-4 py-8">
+      <main className="max-w-4xl mx-auto px-4 py-8">
         
-        {view === 'tasks' ? (
+        {view === 'tasks' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
             
             {/* Daily Progress Bar */}
@@ -372,114 +514,49 @@ const App: React.FC = () => {
                {progress > 0 && <span className="absolute top-[-20px] right-0 text-[10px] text-strawberry font-bold">{progress}% Done</span>}
             </div>
 
-            {/* Search Bar */}
-            <div className="mb-6">
-                <input 
-                  type="text" 
-                  placeholder="Search tasks..." 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-carbon border border-garnet/30 rounded-lg px-4 py-2.5 text-sm text-smoke focus:border-strawberry focus:ring-1 focus:ring-strawberry outline-none transition-all placeholder:text-silver/30"
-                />
-            </div>
-
-            {/* Email & Info Section */}
-            <div className="mb-8 bg-carbon border border-garnet/30 rounded-lg p-5 shadow-lg shadow-black/20">
-              <div className="flex items-start gap-4">
-                <div className="p-2 bg-onyx rounded-lg border border-garnet/20">
-                  <Info className="w-5 h-5 text-strawberry shrink-0" />
-                </div>
-                <div className="flex-1 w-full">
-                  <h2 className="text-sm font-semibold text-smoke mb-1">Configuration Center</h2>
-                  <p className="text-xs text-silver mb-4 leading-relaxed opacity-80 max-w-lg">
-                    Connect your email addresses to receive daily briefings and task reminders. 
-                  </p>
-                  
-                  <div className="space-y-3 bg-onyx/50 p-3 rounded-lg border border-garnet/30">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Users className="w-3.5 h-3.5 text-strawberry"/>
-                      <span className="text-xs font-medium text-silver uppercase tracking-wide">Email Recipients</span>
-                    </div>
-                    
-                    {emailContacts.length > 0 ? (
-                      <div className="space-y-2">
-                        {emailContacts.map(contact => (
-                          <div key={contact.id} className="flex items-center justify-between group p-1.5 hover:bg-carbon rounded transition-colors">
-                            <label className="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
-                              <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                                contact.isActive ? 'bg-mahogany border-mahogany' : 'border-silver/40 bg-onyx'
-                              }`}>
-                                {contact.isActive && <Plus className="w-3 h-3 text-white rotate-45" />} 
-                              </div>
-                              <span className={`text-sm truncate ${contact.isActive ? 'text-smoke' : 'text-silver/50'}`}>
-                                {contact.address}
-                              </span>
-                              <input 
-                                type="checkbox" 
-                                className="hidden" 
-                                checked={contact.isActive} 
-                                onChange={() => toggleEmailActive(contact.id)}
-                              />
-                            </label>
-                            <button 
-                              type="button"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                deleteEmail(contact.id);
-                              }}
-                              className="text-silver hover:text-strawberry p-2 rounded hover:bg-onyx transition-colors ml-2"
-                              title="Remove email"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-silver italic px-1">No email addresses saved.</p>
-                    )}
-
-                    <div className="flex gap-2 mt-3 pt-3 border-t border-garnet/30">
-                      <input
-                        type="email"
-                        value={newEmailAddress}
-                        onChange={(e) => setNewEmailAddress(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && addEmail()}
-                        placeholder="name@example.com"
-                        className="flex-1 bg-onyx border border-garnet/30 rounded-md px-3 py-1.5 text-sm text-smoke placeholder:text-silver/40 focus:border-strawberry outline-none transition-colors"
-                      />
-                      <button 
-                        type="button"
-                        onClick={addEmail}
-                        disabled={!newEmailAddress.includes('@')}
-                        className="bg-mahogany hover:bg-ruby disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1 shadow-md shadow-black/20"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Add
-                      </button>
-                    </div>
-                  </div>
-                  
-                  {/* Mobile Briefing Button */}
-                  <div className="mt-4 sm:hidden">
-                    <button
-                        type="button"
-                        onClick={handleDailyBriefing}
-                        disabled={isBriefingLoading || emailContacts.filter(c => c.isActive).length === 0}
-                        className="w-full flex items-center justify-center gap-2 bg-garnet/30 text-smoke px-3 py-2 rounded-lg text-xs border border-garnet/40"
-                      >
-                        {isBriefingLoading ? <Loader2 className="w-3 h-3 animate-spin"/> : <Mail className="w-3 h-3"/>}
-                        Send Daily Briefing
-                      </button>
-                  </div>
-
-                </div>
-              </div>
-            </div>
-
             {/* Input Area */}
-            <TaskInput onTaskCreate={addTask} />
+            <TaskInput onTaskCreate={addTask} userMood={mood} />
+
+            {/* Integrations Bar (Mock) */}
+            <div className="flex items-center gap-4 mb-6 overflow-x-auto no-scrollbar pb-2">
+                <div className="text-xs font-semibold text-silver/40 uppercase tracking-wider shrink-0">Integrations:</div>
+                <button 
+                    onClick={() => handleIntegrationClick('Slack')} 
+                    className={`flex items-center gap-1 border px-2 py-1 rounded text-xs transition-colors ${
+                        activeIntegrations.includes('Slack') 
+                        ? 'bg-blue-500/10 border-blue-500/50 text-blue-400' 
+                        : 'bg-carbon border-garnet/20 text-silver hover:text-white hover:border-garnet/50'
+                    }`}
+                >
+                    <Slack className="w-3 h-3" /> Slack
+                    {activeIntegrations.includes('Slack') && <Check className="w-3 h-3 ml-1" />}
+                </button>
+                <button 
+                    onClick={() => handleIntegrationClick('Trello')} 
+                    className={`flex items-center gap-1 border px-2 py-1 rounded text-xs transition-colors ${
+                        activeIntegrations.includes('Trello') 
+                        ? 'bg-blue-600/10 border-blue-600/50 text-blue-500' 
+                        : 'bg-carbon border-garnet/20 text-silver hover:text-white hover:border-garnet/50'
+                    }`}
+                >
+                    <Trello className="w-3 h-3" /> Trello
+                    {activeIntegrations.includes('Trello') && <Check className="w-3 h-3 ml-1" />}
+                </button>
+                <button 
+                    onClick={() => handleIntegrationClick('Notion')} 
+                    className={`flex items-center gap-1 border px-2 py-1 rounded text-xs transition-colors ${
+                        activeIntegrations.includes('Notion') 
+                        ? 'bg-white/10 border-white/50 text-white' 
+                        : 'bg-carbon border-garnet/20 text-silver hover:text-white hover:border-garnet/50'
+                    }`}
+                >
+                    <div className="w-3 h-3 bg-current flex items-center justify-center font-bold text-[8px] rounded-sm text-carbon">N</div> Notion
+                    {activeIntegrations.includes('Notion') && <Check className="w-3 h-3 ml-1" />}
+                </button>
+                <button onClick={() => addToast("Connect more integrations in settings", "info")} className="flex items-center gap-1 bg-carbon border border-garnet/20 px-2 py-1 rounded text-xs text-silver hover:text-white hover:border-garnet/50 transition-colors ml-auto">
+                    <Plus className="w-3 h-3" /> Connect
+                </button>
+            </div>
 
             {/* Task List */}
             {isDataLoading ? (
@@ -489,10 +566,26 @@ const App: React.FC = () => {
             ) : (
                 <div className="space-y-2">
                 {tasks.length === 0 ? (
-                    <div className="text-center py-20 bg-carbon rounded-xl border border-dashed border-garnet/30">
-                    <CalendarIcon className="w-12 h-12 text-silver/20 mx-auto mb-3" />
-                    <p className="text-silver/60">Your workspace is empty.</p>
-                    <p className="text-sm text-strawberry/80 mt-1">Start by adding a task above.</p>
+                    // 1.1 Workspace Clarity: Empty State
+                    <div className="text-center py-16 bg-carbon/30 rounded-xl border border-dashed border-garnet/30 flex flex-col items-center">
+                        <div className="w-16 h-16 bg-onyx rounded-full flex items-center justify-center mb-4 border border-garnet/20">
+                            <Sparkles className="w-8 h-8 text-strawberry/50" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-smoke mb-2">Ready to get things done?</h3>
+                        <p className="text-silver/60 max-w-sm mb-6">
+                            Start by adding your first task above, or try <span className="text-strawberry">Brainstorm Mode</span> to break down a big goal.
+                        </p>
+                        
+                        <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md opacity-50 pointer-events-none select-none">
+                            <div className="bg-carbon p-3 rounded-lg border border-garnet/20 w-full">
+                                <div className="h-4 w-3/4 bg-onyx rounded mb-2"></div>
+                                <div className="h-3 w-1/2 bg-onyx rounded"></div>
+                            </div>
+                             <div className="bg-carbon p-3 rounded-lg border border-garnet/20 w-full hidden sm:block">
+                                <div className="h-4 w-2/3 bg-onyx rounded mb-2"></div>
+                                <div className="h-3 w-1/2 bg-onyx rounded"></div>
+                            </div>
+                        </div>
                     </div>
                 ) : (
                     <>
@@ -524,6 +617,8 @@ const App: React.FC = () => {
                                 onUpdate={updateTask}
                                 onDelete={deleteTask}
                                 recipients={getActiveRecipients()}
+                                userMood={mood}
+                                persona={persona}
                                 />
                             ))}
                         </div>
@@ -534,10 +629,129 @@ const App: React.FC = () => {
                 </div>
             )}
           </div>
-        ) : (
-          <PlannerView tasks={tasks} userId={user.id} />
+        )}
+
+        {view === 'planner' && (
+             <PlannerView tasks={tasks} userId={user.id} />
+        )}
+
+        {view === 'analytics' && (
+            <AnalyticsView tasks={tasks} />
+        )}
+
+        {/* Configuration Section (Moved to bottom or separate tab in future, currently kept for email management) */}
+        {view === 'tasks' && (
+            <div className="mt-12 pt-8 border-t border-garnet/20">
+                <details className="group">
+                    <summary className="list-none flex items-center gap-2 text-xs font-semibold text-silver/50 uppercase tracking-wider cursor-pointer hover:text-strawberry transition-colors">
+                        <Info className="w-4 h-4" />
+                        Settings & Email Config
+                    </summary>
+                    <div className="mt-4 bg-carbon border border-garnet/30 rounded-lg p-5 shadow-lg shadow-black/20 animate-in fade-in slide-in-from-top-2">
+                         <div className="flex items-start gap-4">
+                            <div className="flex-1 w-full">
+                                <h2 className="text-sm font-semibold text-smoke mb-1">Email Notifications</h2>
+                                <p className="text-xs text-silver mb-4 leading-relaxed opacity-80 max-w-lg">
+                                    Manage who receives the AI briefings and reminders.
+                                </p>
+                                
+                                <div className="space-y-3 bg-onyx/50 p-3 rounded-lg border border-garnet/30">
+                                    {emailContacts.length > 0 ? (
+                                    <div className="space-y-2">
+                                        {emailContacts.map(contact => (
+                                        <div key={contact.id} className="flex items-center justify-between group p-1.5 hover:bg-carbon rounded transition-colors">
+                                            <label className="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
+                                            <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                                                contact.isActive ? 'bg-mahogany border-mahogany' : 'border-silver/40 bg-onyx'
+                                            }`}>
+                                                {contact.isActive && <Plus className="w-3 h-3 text-white rotate-45" />} 
+                                            </div>
+                                            <span className={`text-sm truncate ${contact.isActive ? 'text-smoke' : 'text-silver/50'}`}>
+                                                {contact.address}
+                                            </span>
+                                            <input 
+                                                type="checkbox" 
+                                                className="hidden" 
+                                                checked={contact.isActive} 
+                                                onChange={() => toggleEmailActive(contact.id)}
+                                            />
+                                            </label>
+                                            <button 
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                deleteEmail(contact.id);
+                                            }}
+                                            className="text-silver hover:text-strawberry p-2 rounded hover:bg-onyx transition-colors ml-2"
+                                            title="Remove email"
+                                            >
+                                            <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                        ))}
+                                    </div>
+                                    ) : (
+                                    <p className="text-xs text-silver italic px-1">No email addresses saved.</p>
+                                    )}
+
+                                    <div className="flex gap-2 mt-3 pt-3 border-t border-garnet/30">
+                                    <input
+                                        type="email"
+                                        value={newEmailAddress}
+                                        onChange={(e) => setNewEmailAddress(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && addEmail()}
+                                        placeholder="name@example.com"
+                                        className="flex-1 bg-onyx border border-garnet/30 rounded-md px-3 py-1.5 text-sm text-smoke placeholder:text-silver/40 focus:border-strawberry outline-none transition-colors"
+                                    />
+                                    <button 
+                                        type="button"
+                                        onClick={addEmail}
+                                        disabled={!newEmailAddress.includes('@')}
+                                        className="bg-mahogany hover:bg-ruby disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1 shadow-md shadow-black/20"
+                                    >
+                                        <Plus className="w-4 h-4" />
+                                        Add
+                                    </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+            </div>
         )}
       </main>
+
+      {/* Edit Profile Modal */}
+      {isEditingProfile && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-carbon border border-garnet/30 rounded-xl shadow-2xl w-full max-w-sm p-6 relative">
+                <button onClick={() => setIsEditingProfile(false)} className="absolute top-4 right-4 text-silver hover:text-white"><X className="w-5 h-5"/></button>
+                <h3 className="text-lg font-bold text-smoke mb-4 flex items-center gap-2"><UserIcon className="w-5 h-5 text-strawberry"/> Edit Profile</h3>
+                
+                <div className="space-y-3">
+                    <div>
+                        <label className="text-xs font-medium text-silver block mb-1.5">Display Name</label>
+                        <input 
+                            type="text" 
+                            value={tempName}
+                            onChange={(e) => setTempName(e.target.value)}
+                            className="w-full bg-onyx text-smoke rounded-lg px-3 py-2 border border-garnet/40 focus:border-strawberry outline-none"
+                            placeholder="Your Name"
+                            autoFocus
+                        />
+                    </div>
+                </div>
+
+                <div className="flex justify-end gap-3 mt-6">
+                     <button onClick={() => setIsEditingProfile(false)} className="px-3 py-2 text-sm text-silver hover:text-white">Cancel</button>
+                     <button onClick={handleUpdateProfile} className="bg-mahogany hover:bg-ruby text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"><Save className="w-4 h-4"/> Save</button>
+                </div>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 };

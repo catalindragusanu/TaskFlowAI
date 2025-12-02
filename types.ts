@@ -25,6 +25,13 @@ export interface Subtask {
   isCompleted: boolean;
 }
 
+export interface Attachment {
+  id: string;
+  name: string;
+  type: 'image' | 'pdf' | 'link';
+  url: string;
+}
+
 export interface Task {
   id: string;
   userId: string;
@@ -36,6 +43,10 @@ export interface Task {
   createdAt: string;
   calendarEventUrl?: string;
   subtasks?: Subtask[];
+  tags?: string[];
+  dependencies?: string[]; // IDs of tasks this depends on
+  attachments?: Attachment[];
+  isRecurring?: boolean;
 }
 
 export interface ParsedTaskResponse {
@@ -43,6 +54,12 @@ export interface ParsedTaskResponse {
   description: string;
   dueDate: string;
   priority: Priority;
+  tags?: string[];
+}
+
+export interface BrainstormResponse {
+  goal: string;
+  tasks: ParsedTaskResponse[];
 }
 
 export interface AIGeneratedEmail {
@@ -81,3 +98,6 @@ export interface DailyPlan {
   schedule: ScheduleItem[];
   notes: string;
 }
+
+export type Mood = 'focused' | 'stressed' | 'creative' | 'tired' | 'neutral';
+export type AIPersona = 'analyst' | 'motivator' | 'strict';
